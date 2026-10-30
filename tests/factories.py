@@ -61,3 +61,16 @@ def ledger(engine: Engine, entry_type: str) -> list[tuple[int, int | None]]:
                 {"t": entry_type},
             ).tuples()
         )
+
+
+def ledger_and_lot_totals(engine: Engine) -> tuple[int, int]:
+    """(sum of all ledger amounts, sum of all lots' remaining). Must always be equal: every change
+    to a lot's remaining is recorded by exactly one ledger entry (EARN/REDEEM/REVERSAL/EXPIRY)."""
+    with engine.connect() as conn:
+        ledger_total, lot_total = conn.execute(
+            text(
+                "SELECT (SELECT COALESCE(SUM(amount_milli), 0)::bigint FROM ledger_entries), "
+                "       (SELECT COALESCE(SUM(remaining_milli), 0)::bigint FROM credit_lots)"
+            )
+        ).one()
+    return ledger_total, lot_total

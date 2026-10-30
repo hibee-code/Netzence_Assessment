@@ -12,10 +12,11 @@ import pytest
 from sqlalchemy import Connection, Engine, text
 
 from app.services.balances import get_balance_milli
+from app.services.cancellations import CancellationResult, cancel_ride
 from app.services.redemptions import InsufficientBalance, Redemption, redeem
 from app.services.rides import RideCompleted, RideConflict, RideResult, record_completed_ride
-from tests.concurrency import run_concurrently
-from tests.factories import add_lot, ledger, remaining_by_lot
+from tests.concurrency import run_concurrently, run_interleaved
+from tests.factories import add_lot, ledger, ledger_and_lot_totals, remaining_by_lot
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 5, 31, 9, 0, tzinfo=UTC)
@@ -170,3 +171,77 @@ def test_concurrent_balance_reads_write_one_expiry_entry(concurrent_engine: Engi
 
     assert results == [0] * 10
     assert ledger(test_engine, "EXPIRY") == [(-40_000, lot)]
+
+
+# --- cancellation ---------------------------------------------------------------------
+
+def test_concurrent_identical_cancellations_reverse_once(concurrent_engine: Engine, test_engine: Engine) -> None:
+    lot = add_lot(test_engine, "r1", 12_000, datetime(2026, 1, 1, tzinfo=UTC))
+
+    results = run_concurrently(concurrent_engine, 10, lambda conn, _: cancel_ride(conn, "r1", None, NOW))
+
+    assert set(results) == {CancellationResult("r1", "cancelled", 12_000, 0)}
+    assert ledger(test_engine, "REVERSAL") == [(-12_000, lot)]
+    assert remaining_by_lot(test_engine) == {lot: 0}
+
+
+def _assert_recorded_and_cancelled_once(engine: Engine) -> None:
+    with engine.connect() as conn:
+        cancelled = conn.execute(text("SELECT count(*) FROM rides WHERE cancelled_at IS NOT NULL")).scalar_one()
+        pending = conn.execute(text("SELECT count(*) FROM ride_cancellations WHERE applied_at IS NULL")).scalar_one()
+    assert (cancelled, pending) == (1, 0)
+    assert len(ledger(engine, "EARN")) == len(ledger(engine, "REVERSAL")) == 1
+    assert ledger_and_lot_totals(engine) == (0, 0)
+
+
+@pytest.mark.usefixtures("existing_driver")
+def test_cancellation_arriving_while_its_completion_is_in_flight_is_not_lost(
+    concurrent_engine: Engine, test_engine: Engine
+) -> None:
+    # The completion has inserted the ride and checked for a tombstone (none), but not committed.
+    # Without the ride lock, the cancellation wouldn't see the ride, would write a tombstone nobody
+    # ever reads, and the ride would stay uncancelled.
+    result = run_interleaved(
+        concurrent_engine,
+        first=lambda conn: record_completed_ride(conn, _event(), NOW),
+        second=lambda conn: cancel_ride(conn, "r1", None, NOW),
+    )
+
+    assert result == CancellationResult("r1", "cancelled", 1476, 0)
+    _assert_recorded_and_cancelled_once(test_engine)
+
+
+@pytest.mark.usefixtures("existing_driver")
+def test_completion_arriving_while_its_cancellation_is_in_flight_applies_it(
+    concurrent_engine: Engine, test_engine: Engine
+) -> None:
+    # The cancellation has written its tombstone, but not committed. Without the ride lock, the
+    # completion wouldn't see the tombstone and would record the ride uncancelled.
+    result = run_interleaved(
+        concurrent_engine,
+        first=lambda conn: cancel_ride(conn, "r1", None, NOW),
+        second=lambda conn: record_completed_ride(conn, _event(), NOW),
+    )
+
+    assert result.created and result.cancelled
+    _assert_recorded_and_cancelled_once(test_engine)
+
+
+def test_cancellation_racing_redemptions_never_overdraws(concurrent_engine: Engine, test_engine: Engine) -> None:
+    add_lot(test_engine, "r-cancel", 50_000, datetime(2026, 1, 1, tzinfo=UTC))
+    add_lot(test_engine, "r-other", 50_000, datetime(2026, 2, 1, tzinfo=UTC))
+
+    def cancel_or_redeem(conn: Connection, worker: int) -> object:
+        if worker == 0:
+            return cancel_ride(conn, "r-cancel", None, NOW)
+        return redeem(conn, "d1", 10_000, f"key-{worker}", None, NOW)
+
+    results = run_concurrently(concurrent_engine, 10, cancel_or_redeem)
+
+    unexpected = [r for r in results if isinstance(r, Exception) and not isinstance(r, InsufficientBalance)]
+    assert unexpected == []
+    cancellation = next(r for r in results if isinstance(r, CancellationResult))
+    assert cancellation.reversed_milli + cancellation.shortfall_milli == 50_000  # type: ignore[operator]
+    assert min(remaining_by_lot(test_engine).values()) >= 0
+    ledger_total, lot_total = ledger_and_lot_totals(test_engine)
+    assert ledger_total == lot_total == _balance(test_engine)

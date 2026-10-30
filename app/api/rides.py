@@ -6,7 +6,8 @@ from sqlalchemy import Engine
 from app.clock import Clock, get_clock
 from app.db import get_engine
 from app.money import from_milli
-from app.schemas import RideCompletedIn, RideCompletedOut
+from app.schemas import RideCancelledIn, RideCancelledOut, RideCompletedIn, RideCompletedOut
+from app.services.cancellations import cancel_ride
 from app.services.rides import RideCompleted, record_completed_ride
 
 router = APIRouter(prefix="/rides", tags=["rides"])
@@ -44,5 +45,31 @@ def complete_ride(
         driver_id=result.driver_id,
         credits=from_milli(result.credits_milli),
         expires_at=result.expires_at,
-        status="recorded" if result.created else "duplicate",
+        status="duplicate" if not result.created else "cancelled" if result.cancelled else "recorded",
+    )
+
+
+@router.post(
+    "/cancelled",
+    responses={
+        200: {"description": "Ride cancelled (or already was; original outcome replayed)"},
+        202: {"description": "Ride not completed yet; cancellation stored and applied on completion"},
+    },
+)
+def cancel_completed_ride(
+    body: RideCancelledIn,
+    response: Response,
+    engine: Annotated[Engine, Depends(get_engine)],
+    clock: Annotated[Clock, Depends(get_clock)],
+) -> RideCancelledOut:
+    with engine.begin() as conn:
+        result = cancel_ride(conn, body.ride_id, body.reason, clock.now())
+
+    if result.status == "pending_completion":
+        response.status_code = status.HTTP_202_ACCEPTED
+    return RideCancelledOut(
+        ride_id=result.ride_id,
+        status=result.status,
+        reversed=None if result.reversed_milli is None else from_milli(result.reversed_milli),
+        shortfall=None if result.shortfall_milli is None else from_milli(result.shortfall_milli),
     )

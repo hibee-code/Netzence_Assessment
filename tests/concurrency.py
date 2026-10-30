@@ -7,8 +7,8 @@ deliberately not used: it can serialize requests and hide races.)
 
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from typing import TypeVar
+from concurrent.futures import ThreadPoolExecutor, wait
+from typing import Any, TypeVar
 
 from sqlalchemy import Connection, Engine
 
@@ -36,3 +36,33 @@ def run_concurrently(
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(run_one, range(workers)))
+
+
+def run_interleaved(
+    engine: Engine,
+    first: Callable[[Connection], Any],
+    second: Callable[[Connection], T],
+    head_start_seconds: float = 0.5,
+) -> T:
+    """Force the riskiest interleaving deterministically, instead of hoping threads hit it.
+
+    `first` runs in a transaction that stays OPEN while `second` starts on another connection.
+    `second` gets `head_start_seconds` to either finish (nothing stopped it) or block on a lock held
+    by `first`. Then `first` commits, and `second`'s result is returned.
+    """
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        with engine.connect() as conn:
+            transaction = conn.begin()
+            first(conn)
+
+            def run_second() -> T:
+                with engine.begin() as other:
+                    return second(other)
+
+            future = pool.submit(run_second)
+            wait([future], timeout=head_start_seconds)
+            transaction.commit()  # before leaving the pool: `second` may be waiting on our locks
+        return future.result(timeout=30)
+    finally:
+        pool.shutdown()

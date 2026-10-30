@@ -1,5 +1,6 @@
 """Recording completed rides. Idempotent: the same event, however often and concurrently it
 arrives, creates exactly one ride, at most one credit lot, and at most one EARN ledger entry.
+If a cancellation for the ride arrived first (tombstone), it is applied in the same transaction.
 
 All writes go through the caller's connection, inside the caller's single transaction.
 """
@@ -12,7 +13,9 @@ from sqlalchemy import Connection, text
 
 from app.config import CREDIT_LIFETIME, MAX_COMPLETED_AT_FUTURE_SKEW
 from app.credits import calculate_credits_milli, normalize_vehicle_type
+from app.services.cancellations import apply_cancellation
 from app.services.drivers import ensure_driver
+from app.services.locks import lock_ride
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,7 @@ class RideResult:
     credits_milli: int
     expires_at: datetime | None  # None when the ride earned nothing
     created: bool  # False when this event was a duplicate of an already-recorded ride
+    cancelled: bool  # True when the ride has been cancelled (e.g. a cancellation arrived first)
 
 
 class CompletedAtInFuture(Exception):
@@ -53,10 +57,12 @@ def record_completed_ride(conn: Connection, event: RideCompleted, now: datetime)
     vehicle_type = normalize_vehicle_type(event.vehicle_type)
     credits_milli = calculate_credits_milli(event.distance_km, vehicle_type)
 
+    # Concurrent events for this ride_id (duplicates, or its cancellation) wait here until this
+    # transaction commits, then see its result.
+    lock_ride(conn, event.ride_id)
     ensure_driver(conn, event.driver_id, now)
 
-    # The primary key arbitrates duplicates. A concurrent inserter of the same ride_id blocks here
-    # until the first transaction commits, then gets no row back and falls through to the replay.
+    # The primary key decides: no row back means the ride is already recorded.
     inserted = conn.execute(
         text(
             """
@@ -86,7 +92,16 @@ def record_completed_ride(conn: Connection, event: RideCompleted, now: datetime)
     if credits_milli > 0:
         expires_at = _issue_credits(conn, event, credits_milli, now)
 
-    return RideResult(event.ride_id, event.driver_id, credits_milli, expires_at, created=True)
+    tombstone = conn.execute(
+        text("SELECT reason FROM ride_cancellations WHERE ride_id = :ride_id AND applied_at IS NULL"),
+        {"ride_id": event.ride_id},
+    ).first()
+    if tombstone is not None:
+        apply_cancellation(conn, event.ride_id, event.driver_id, tombstone.reason, now)
+
+    return RideResult(
+        event.ride_id, event.driver_id, credits_milli, expires_at, created=True, cancelled=tombstone is not None
+    )
 
 
 def _issue_credits(conn: Connection, event: RideCompleted, credits_milli: int, now: datetime) -> datetime:
@@ -131,7 +146,8 @@ def _replay_duplicate(conn: Connection, event: RideCompleted, vehicle_type: str)
     original = conn.execute(
         text(
             """
-            SELECT r.driver_id, r.distance_km, r.vehicle_type, r.completed_at, r.credits_milli, l.expires_at
+            SELECT r.driver_id, r.distance_km, r.vehicle_type, r.completed_at, r.credits_milli, r.cancelled_at,
+                   l.expires_at
             FROM rides r
             LEFT JOIN credit_lots l ON l.ride_id = r.ride_id
             WHERE r.ride_id = :ride_id
@@ -155,5 +171,10 @@ def _replay_duplicate(conn: Connection, event: RideCompleted, vehicle_type: str)
         raise RideConflict(event.ride_id, conflicting)
 
     return RideResult(
-        event.ride_id, original.driver_id, original.credits_milli, original.expires_at, created=False
+        event.ride_id,
+        original.driver_id,
+        original.credits_milli,
+        original.expires_at,
+        created=False,
+        cancelled=original.cancelled_at is not None,
     )

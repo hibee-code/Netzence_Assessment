@@ -12,8 +12,9 @@ from datetime import datetime
 from sqlalchemy import Connection, text
 
 from app.money import from_milli
-from app.services.drivers import lock_driver
 from app.services.expiry import expire_lots
+from app.services.locks import lock_driver
+from app.services.lots import debit_lots, drain_fifo, lock_spendable_lots
 
 
 @dataclass(frozen=True)
@@ -64,18 +65,7 @@ def redeem(
         return _load_redemption(conn, existing.id, created=False)
 
     expire_lots(conn, driver_id, now)
-    lots = conn.execute(
-        text(
-            """
-            SELECT id, remaining_milli
-            FROM credit_lots
-            WHERE driver_id = :driver_id AND expires_at > :now AND remaining_milli > 0
-            ORDER BY expires_at, id
-            FOR UPDATE
-            """
-        ),
-        {"driver_id": driver_id, "now": now},
-    ).all()
+    lots = lock_spendable_lots(conn, driver_id, now)
 
     available = sum(lot.remaining_milli for lot in lots)
     if available < amount_milli:
@@ -99,26 +89,14 @@ def redeem(
         },
     ).scalar_one()
 
-    # FIFO: drain lots in expiry order until the amount is covered.
-    allocations = []
-    left = amount_milli
-    for lot in lots:
-        if left == 0:
-            break
-        take = min(lot.remaining_milli, left)
-        allocations.append({"redemption_id": redemption_id, "lot_id": lot.id, "amount": take})
-        left -= take
-
-    conn.execute(
-        text("UPDATE credit_lots SET remaining_milli = remaining_milli - :amount WHERE id = :lot_id"),
-        allocations,
-    )
+    debits = drain_fifo(lots, amount_milli)
+    debit_lots(conn, debits)
     conn.execute(
         text(
             "INSERT INTO redemption_allocations (redemption_id, lot_id, amount_milli) "
             "VALUES (:redemption_id, :lot_id, :amount)"
         ),
-        allocations,
+        [{"redemption_id": redemption_id, "lot_id": lot_id, "amount": amount} for lot_id, amount in debits],
     )
     conn.execute(
         text(

@@ -30,7 +30,20 @@ class RideCompletedOut(BaseModel):
     driver_id: str
     credits: str
     expires_at: datetime | None
-    status: Literal["recorded", "duplicate"]
+    # "cancelled": recorded, and a cancellation that arrived earlier was applied straight away.
+    status: Literal["recorded", "cancelled", "duplicate"]
+
+
+class RideCancelledIn(BaseModel):
+    ride_id: Identifier
+    reason: Annotated[str | None, Field(max_length=500)] = None
+
+
+class RideCancelledOut(BaseModel):
+    ride_id: str
+    status: Literal["cancelled", "pending_completion"]
+    reversed: str | None  # None while pending_completion
+    shortfall: str | None
 
 
 class BalanceOut(BaseModel):
