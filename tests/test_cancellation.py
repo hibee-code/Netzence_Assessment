@@ -67,6 +67,12 @@ def test_full_reversal_keeps_the_original_earn_and_adds_a_reversal(client: TestC
     lot_id = earn_before.lot_id
     assert ledger(test_engine, "REVERSAL") == [(-12_000, lot_id)]
     assert _reversal_reason(test_engine) == "Ride r1 cancelled (refund); reversed 12.000 of 12.000"
+    # And through the API: history still shows the original entry, followed by the reversal.
+    history = client.get("/drivers/d1/history").json()["entries"]
+    assert [(e["type"], e["amount"], e["ride_id"]) for e in history] == [
+        ("EARN", "12.000", "r1"),
+        ("REVERSAL", "-12.000", "r1"),
+    ]
 
 
 def test_duplicate_cancellation_replays_the_original_outcome(client: TestClient, test_engine: Engine) -> None:

@@ -23,6 +23,10 @@ CREDIT_LIFETIME = "12 months"
 # Reject completion events dated further than this into the future (clock skew allowance).
 MAX_COMPLETED_AT_FUTURE_SKEW = timedelta(minutes=5)
 
+# --- API limits -----------------------------------------------------------------------
+HISTORY_DEFAULT_LIMIT = 100
+HISTORY_MAX_LIMIT = 500
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(frozen=True)

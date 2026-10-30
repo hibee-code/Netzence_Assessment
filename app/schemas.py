@@ -51,6 +51,21 @@ class BalanceOut(BaseModel):
     balance: str
 
 
+class LedgerEntryOut(BaseModel):
+    id: int
+    type: Literal["EARN", "REDEEM", "REVERSAL", "EXPIRY"]
+    amount: str  # signed: "12.000" credit, "-5.000" debit
+    ride_id: str | None
+    redemption_id: int | None
+    reason: str
+    created_at: datetime
+
+
+class HistoryOut(BaseModel):
+    driver_id: str
+    entries: list[LedgerEntryOut]
+
+
 class RedeemIn(BaseModel):
     # Positive, at most 3 dp; 15 integer digits keeps milli-credits within BIGINT.
     amount: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=3)]

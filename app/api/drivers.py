@@ -1,13 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import Engine
 
 from app.clock import Clock, get_clock
+from app.config import HISTORY_DEFAULT_LIMIT, HISTORY_MAX_LIMIT
 from app.db import get_engine
 from app.money import from_milli, to_milli
-from app.schemas import AllocationOut, BalanceOut, RedeemIn, RedeemOut
-from app.services.balances import get_balance_milli
+from app.schemas import AllocationOut, BalanceOut, HistoryOut, LedgerEntryOut, RedeemIn, RedeemOut
+from app.services.balances import get_balance_milli, get_history
 from app.services.redemptions import redeem
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -23,6 +24,33 @@ def get_balance(
     with engine.begin() as conn:
         balance = get_balance_milli(conn, driver_id, clock.now())
     return BalanceOut(driver_id=driver_id, balance=from_milli(balance))
+
+
+@router.get("/{driver_id}/history")
+def get_driver_history(
+    driver_id: str,
+    engine: Annotated[Engine, Depends(get_engine)],
+    clock: Annotated[Clock, Depends(get_clock)],
+    limit: Annotated[int, Query(ge=1, le=HISTORY_MAX_LIMIT)] = HISTORY_DEFAULT_LIMIT,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> HistoryOut:
+    with engine.begin() as conn:  # lazy expiry may write EXPIRY entries
+        entries = get_history(conn, driver_id, clock.now(), limit, offset)
+    return HistoryOut(
+        driver_id=driver_id,
+        entries=[
+            LedgerEntryOut(
+                id=e.id,
+                type=e.entry_type,  # type: ignore[arg-type]  # DB CHECK guarantees the Literal
+                amount=from_milli(e.amount_milli),
+                ride_id=e.ride_id,
+                redemption_id=e.redemption_id,
+                reason=e.reason,
+                created_at=e.created_at,
+            )
+            for e in entries
+        ],
+    )
 
 
 @router.post(

@@ -37,10 +37,12 @@ def add_lot(
             ),
             params,
         ).scalar_one()
+        # created_at set explicitly (as the app does) rather than the DB's now(), so history
+        # ordering is consistent with the entries the app writes from the injected clock.
         conn.execute(
             text(
-                "INSERT INTO ledger_entries (driver_id, entry_type, amount_milli, ride_id, lot_id, reason) "
-                "VALUES (:driver_id, 'EARN', :amount, :ride_id, :lot_id, 'test earn')"
+                "INSERT INTO ledger_entries (driver_id, entry_type, amount_milli, ride_id, lot_id, reason, created_at) "
+                "VALUES (:driver_id, 'EARN', :amount, :ride_id, :lot_id, 'test earn', :completed_at)"
             ),
             params | {"lot_id": lot_id},
         )
