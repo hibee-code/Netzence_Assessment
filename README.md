@@ -72,3 +72,8 @@ docker compose run --rm api pytest -v
 ```
 
 The image contains a copy of the code, so after changing code rebuild first: `docker compose build api`.
+
+- The test session migrates the test database to `head` once; every test then starts from empty tables
+  (`TRUNCATE ... RESTART IDENTITY CASCADE` over every table the migrations created).
+- Time is injectable: endpoints get a `Clock` via the `get_clock` dependency (`app/clock.py`). Tests use the
+  `clock` fixture (a `FakeClock`, fixed at 2026-06-01T12:00Z) and move it with `clock.set(...)` / `clock.advance(...)`.

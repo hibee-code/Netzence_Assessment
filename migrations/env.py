@@ -1,27 +1,29 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import URL, create_engine, pool
+from sqlalchemy import Connection, create_engine, pool
 
 from app.config import get_settings
 
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Keep loggers configured by the caller (e.g. pytest) working when run programmatically.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Migrations are hand-written; there is no ORM metadata to autogenerate from.
 target_metadata = None
 
 
-def _database_url() -> str | URL:
-    # An explicit sqlalchemy.url (set by the test fixture) wins; otherwise use the app's settings.
-    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
+def _run(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=_database_url(),
+        url=get_settings().database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -32,15 +34,16 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    engine = create_engine(_database_url(), poolclass=pool.NullPool)
+    # Tests pass their own connection (Alembic's documented pattern for programmatic use),
+    # which points migrations at the test database. Otherwise use the app's database.
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _run(connection)
+        return
+
+    engine = create_engine(get_settings().database_url, poolclass=pool.NullPool)
     with engine.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        _run(connection)
     engine.dispose()
 
 
