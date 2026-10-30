@@ -53,7 +53,8 @@ def test_all_milli_amounts_are_bigint(test_engine: Engine) -> None:
             )
         ).all()
 
-    assert len(rows) == 6  # rides.credits, lots.amount/remaining, redemptions, allocations, ledger
+    # rides.credits, lots.amount/remaining, redemptions.amount/balance_after, allocations, ledger
+    assert len(rows) == 7
     assert {row.data_type for row in rows} == {"bigint"}
 
 

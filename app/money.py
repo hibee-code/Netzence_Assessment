@@ -33,6 +33,8 @@ def floor_to_milli(amount: Decimal) -> int:
 
 def from_milli(milli: int) -> str:
     """Milli-credits to a decimal string with exactly 3 decimal places, e.g. 12345 -> "12.345"."""
+    if not isinstance(milli, int):
+        raise TypeError(f"expected int milli-credits, got {type(milli).__name__}")
     sign = "-" if milli < 0 else ""
     whole, fraction = divmod(abs(milli), MILLI_PER_CREDIT)
     return f"{sign}{whole}.{fraction:03d}"

@@ -11,8 +11,11 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import Connection, Engine, text
 
+from app.services.balances import get_balance_milli
+from app.services.redemptions import InsufficientBalance, Redemption, redeem
 from app.services.rides import RideCompleted, RideConflict, RideResult, record_completed_ride
 from tests.concurrency import run_concurrently
+from tests.factories import add_lot, ledger, remaining_by_lot
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 5, 31, 9, 0, tzinfo=UTC)
@@ -90,3 +93,80 @@ def test_concurrent_first_rides_of_a_new_driver_all_succeed(
 
     assert [r for r in results if isinstance(r, Exception)] == []
     assert _counts(test_engine) == {"drivers": 1, "rides": 20, "credit_lots": 20, "ledger_entries": 20}
+
+
+# --- redemption ----------------------------------------------------------------------
+
+@pytest.fixture
+def balance_of_100_credits(test_engine: Engine) -> None:
+    """4 lots x 25 credits with different expiries, so each 30-credit redemption spans two lots."""
+    for month in (1, 2, 3, 4):
+        add_lot(test_engine, f"r{month}", 25_000, datetime(2026, month, 1, tzinfo=UTC))
+
+
+def _balance(engine: Engine) -> int:
+    with engine.begin() as conn:
+        return get_balance_milli(conn, "d1", NOW)
+
+
+@pytest.mark.usefixtures("balance_of_100_credits")
+def test_key_10_concurrent_redeems_of_30_from_100_exactly_3_succeed(
+    concurrent_engine: Engine, test_engine: Engine
+) -> None:
+    results = run_concurrently(
+        concurrent_engine, 10, lambda conn, i: redeem(conn, "d1", 30_000, f"key-{i}", None, NOW)
+    )
+
+    succeeded = [r for r in results if isinstance(r, Redemption)]
+    refused = [r for r in results if isinstance(r, InsufficientBalance)]
+    assert len(succeeded) == 3
+    assert len(refused) == 7  # and nothing else: no deadlocks, no constraint violations
+    assert _balance(test_engine) == 10_000
+    assert min(remaining_by_lot(test_engine).values()) >= 0
+    assert sorted(r.balance_after_milli for r in succeeded) == [10_000, 40_000, 70_000]
+    assert sum(amount for amount, _ in ledger(test_engine, "REDEEM")) == -90_000
+    # Every refusal saw a real balance: 10 credits left after the third success.
+    assert {r.available_milli for r in refused} == {10_000}
+
+
+@pytest.mark.usefixtures("balance_of_100_credits")
+def test_concurrent_redeems_with_the_same_key_charge_once(
+    concurrent_engine: Engine, test_engine: Engine
+) -> None:
+    results = run_concurrently(
+        concurrent_engine, 10, lambda conn, _: redeem(conn, "d1", 30_000, "same-key", None, NOW)
+    )
+
+    assert all(isinstance(r, Redemption) for r in results), results
+    redemptions = [r for r in results if isinstance(r, Redemption)]
+    assert sum(r.created for r in redemptions) == 1
+    assert {(r.redemption_id, r.balance_after_milli) for r in redemptions} == {(1, 70_000)}
+    assert _balance(test_engine) == 70_000
+    assert ledger(test_engine, "REDEEM") == [(-30_000, None)]
+
+
+
+def test_same_key_retry_of_a_full_balance_redemption_replays_instead_of_refusing(
+    concurrent_engine: Engine, test_engine: Engine
+) -> None:
+    # Redeeming the WHOLE balance: a retry that re-checked the balance after the original
+    # committed would see 0 and answer "insufficient". It must replay the original instead.
+    add_lot(test_engine, "r1", 30_000, datetime(2026, 1, 1, tzinfo=UTC))
+
+    results = run_concurrently(
+        concurrent_engine, 10, lambda conn, _: redeem(conn, "d1", 30_000, "same-key", None, NOW)
+    )
+
+    assert all(isinstance(r, Redemption) for r in results), results
+    assert {r.redemption_id for r in results if isinstance(r, Redemption)} == {1}
+    assert _balance(test_engine) == 0
+
+# --- expiry ---------------------------------------------------------------------------
+
+def test_concurrent_balance_reads_write_one_expiry_entry(concurrent_engine: Engine, test_engine: Engine) -> None:
+    lot = add_lot(test_engine, "r-old", 40_000, datetime(2025, 5, 1, tzinfo=UTC))  # expired at NOW
+
+    results = run_concurrently(concurrent_engine, 10, lambda conn, _: get_balance_milli(conn, "d1", NOW))
+
+    assert results == [0] * 10
+    assert ledger(test_engine, "EXPIRY") == [(-40_000, lot)]

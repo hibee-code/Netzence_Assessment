@@ -20,8 +20,8 @@ def test_each_test_starts_with_empty_tables_and_reset_ids(test_engine: Engine, r
         conn.execute(text("INSERT INTO drivers (id) VALUES ('d1')"))
         redemption_id = conn.execute(
             text(
-                "INSERT INTO redemptions (driver_id, amount_milli, idempotency_key) "
-                "VALUES ('d1', 100, :key) RETURNING id"
+                "INSERT INTO redemptions (driver_id, amount_milli, idempotency_key, balance_after_milli) "
+                "VALUES ('d1', 100, :key, 0) RETURNING id"
             ),
             {"key": run},
         ).scalar_one()

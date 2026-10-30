@@ -12,6 +12,7 @@ from sqlalchemy import Connection, text
 
 from app.config import CREDIT_LIFETIME, MAX_COMPLETED_AT_FUTURE_SKEW
 from app.credits import calculate_credits_milli, normalize_vehicle_type
+from app.services.drivers import ensure_driver
 
 
 @dataclass(frozen=True)
@@ -52,10 +53,7 @@ def record_completed_ride(conn: Connection, event: RideCompleted, now: datetime)
     vehicle_type = normalize_vehicle_type(event.vehicle_type)
     credits_milli = calculate_credits_milli(event.distance_km, vehicle_type)
 
-    conn.execute(
-        text("INSERT INTO drivers (id, created_at) VALUES (:driver_id, :now) ON CONFLICT (id) DO NOTHING"),
-        {"driver_id": event.driver_id, "now": now},
-    )
+    ensure_driver(conn, event.driver_id, now)
 
     # The primary key arbitrates duplicates. A concurrent inserter of the same ride_id blocks here
     # until the first transaction commits, then gets no row back and falls through to the replay.

@@ -21,7 +21,8 @@ INSERT_LOT = (
     "VALUES ('d1', :ride_id, :amount, :remaining, :earned_at, :expires_at)"
 )
 INSERT_REDEMPTION = (
-    "INSERT INTO redemptions (driver_id, amount_milli, idempotency_key) VALUES (:driver_id, :amount, :key)"
+    "INSERT INTO redemptions (driver_id, amount_milli, idempotency_key, balance_after_milli) "
+    "VALUES (:driver_id, :amount, :key, 0)"
 )
 INSERT_ALLOCATION = (
     "INSERT INTO redemption_allocations (redemption_id, lot_id, amount_milli) VALUES (1, 1, :amount)"

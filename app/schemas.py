@@ -31,3 +31,27 @@ class RideCompletedOut(BaseModel):
     credits: str
     expires_at: datetime | None
     status: Literal["recorded", "duplicate"]
+
+
+class BalanceOut(BaseModel):
+    driver_id: str
+    balance: str
+
+
+class RedeemIn(BaseModel):
+    # Positive, at most 3 dp; 15 integer digits keeps milli-credits within BIGINT.
+    amount: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=3)]
+    reason: Annotated[str | None, Field(max_length=500)] = None
+
+
+class AllocationOut(BaseModel):
+    lot_id: int
+    ride_id: str
+    amount: str
+
+
+class RedeemOut(BaseModel):
+    redemption_id: int
+    amount: str
+    balance_after: str
+    allocations: list[AllocationOut]

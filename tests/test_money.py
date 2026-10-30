@@ -41,6 +41,13 @@ def test_money_helpers_reject_floats() -> None:
         floor_to_milli(0.1)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("milli", [1.0, Decimal("1000")])
+def test_from_milli_accepts_only_integer_milli(milli: object) -> None:
+    # e.g. Postgres SUM(bigint) returns NUMERIC -> Decimal; it must be cast, not silently formatted.
+    with pytest.raises(TypeError, match="int milli-credits"):
+        from_milli(milli)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("amount", "milli"),
     [
