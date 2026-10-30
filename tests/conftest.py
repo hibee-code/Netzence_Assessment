@@ -6,11 +6,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
+from sqlalchemy.pool import NullPool
 
 from app.clock import get_clock
 from app.config import get_settings
-from app.db import get_engine
+from app.db import create_db_engine, get_engine
 from app.main import app
 from tests.fakes import FakeClock
 
@@ -35,8 +36,17 @@ def test_engine() -> Iterator[Engine]:
         pytest.fail(
             "POSTGRES_TEST_DB is not set in .env. Run tests with: docker compose run --rm api pytest -v"
         )
-    engine = create_engine(url, pool_pre_ping=True)
+    engine = create_db_engine(url, pool_pre_ping=True)
     _run_alembic(engine, "upgrade", "head")
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def concurrent_engine(test_engine: Engine) -> Iterator[Engine]:
+    """Engine for concurrency tests: NullPool, so every thread gets its own real connection
+    (the default pool caps simultaneous connections and would queue the workers)."""
+    engine = create_db_engine(test_engine.url, poolclass=NullPool)
     yield engine
     engine.dispose()
 

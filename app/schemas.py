@@ -1,0 +1,33 @@
+"""Request/response models. Credit amounts leave the API as decimal strings with 3 dp."""
+
+from datetime import datetime
+from decimal import Decimal
+from typing import Annotated, Literal
+
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
+
+from app.credits import normalize_vehicle_type
+
+Identifier = Annotated[str, Field(min_length=1, max_length=255)]
+
+
+class RideCompletedIn(BaseModel):
+    ride_id: Identifier
+    driver_id: Identifier
+    # Matches rides.distance_km NUMERIC(10,3). Accepts JSON numbers or strings; parsed as Decimal.
+    distance_km: Annotated[Decimal, Field(gt=0, max_digits=10, decimal_places=3)]
+    vehicle_type: Annotated[str, Field(min_length=1, max_length=50)]
+    completed_at: AwareDatetime
+
+    @field_validator("vehicle_type")
+    @classmethod
+    def _normalize_vehicle_type(cls, value: str) -> str:
+        return normalize_vehicle_type(value)
+
+
+class RideCompletedOut(BaseModel):
+    ride_id: str
+    driver_id: str
+    credits: str
+    expires_at: datetime | None
+    status: Literal["recorded", "duplicate"]
