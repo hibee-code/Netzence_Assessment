@@ -62,13 +62,13 @@ All configuration comes from `.env`, which is gitignored and never copied into t
 
 | Variable | Purpose | Example |
 |---|---|---|
-| `POSTGRES_USER` | Database user. Created on first start and used by the API. | `credits` |
+| `POSTGRES_USER` | Database user. Created on first start and used by the API. | `Sample` |
 | `POSTGRES_PASSWORD` | Database password. Any characters are allowed; they are escaped when the connection URL is built. | a random string |
-| `POSTGRES_DB` | Application database. | `credits` |
-| `POSTGRES_TEST_DB` | Test database. Created on first start. | `credits_test` |
+| `POSTGRES_DB` | Application database. | `Sample` |
+| `POSTGRES_TEST_DB` | Test database. Created on first start. | `Sample` |
 | `POSTGRES_HOST` | Host the API connects to: the Compose service name. | `db` |
-| `POSTGRES_PORT` | Port the API connects to: PostgreSQL's port inside the container. | `5432` |
-| `API_PORT` | Port the API is published on, on your machine. | `8000` |
+| `POSTGRES_PORT` | Port the API connects to: PostgreSQL's port inside the container. | `Sample` |
+| `API_PORT` | Port the API is published on, on your machine. | `Sample` |
 
 > **Note:** PostgreSQL reads `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` and `POSTGRES_TEST_DB` only when its data volume is first created. If you change them later, recreate the volume with `docker compose down -v`. This deletes all data.
 
