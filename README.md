@@ -26,13 +26,13 @@ Built with Python 3.12, FastAPI, PostgreSQL 16, SQLAlchemy 2.0 and Alembic. Ever
    For local use, these values work. Choose your own password:
 
    ```dotenv
-   POSTGRES_USER=credits
-   POSTGRES_PASSWORD=change-me
-   POSTGRES_DB=credits
-   POSTGRES_TEST_DB=credits_test
-   POSTGRES_HOST=db
-   POSTGRES_PORT=5432
-   API_PORT=8000
+   POSTGRES_USER=sample
+   POSTGRES_PASSWORD=sample
+   POSTGRES_DB=sample
+   POSTGRES_TEST_DB=sample
+   POSTGRES_HOST=sample
+   POSTGRES_PORT=sample
+   API_PORT=sample
    ```
 
 2. **Start the service.**
@@ -76,9 +76,9 @@ Business rules are constants in [`app/config.py`](app/config.py), not environmen
 
 | Constant | Value |
 |---|---|
-| `EV_GRAMS_CO2_AVOIDED_PER_KM` | `120` |
-| `CREDIT_LIFETIME` | `12 months` |
-| `MAX_COMPLETED_AT_FUTURE_SKEW` | `5 minutes` |
+| `EV_GRAMS_CO2_AVOIDED_PER_KM` | `X` |
+| `CREDIT_LIFETIME` | `Y months` |
+| `MAX_COMPLETED_AT_FUTURE_SKEW` | `Z minutes` |
 
 ---
 
@@ -414,8 +414,8 @@ app/
     ├── balances.py          Balance and history
     ├── expiry.py            Expiry
     ├── lots.py              Shared oldest-first spending
-    ├── locks.py             Every lock, and the order they're taken in
-    └── drivers.py           Driver registration
+    ├── ledger.py            Writing ledger entries
+    └── locks.py             Every lock, and the order they're taken in
 migrations/              Alembic migrations
 docker/postgres/init/    Creates the test database on first start
 tests/                   Test suite (real PostgreSQL)

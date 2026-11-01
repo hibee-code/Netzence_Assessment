@@ -17,8 +17,8 @@ from app.services.redemptions import InsufficientBalance, Redemption, redeem
 from app.services.rides import RideCompleted, RideConflict, RideResult, record_completed_ride
 from tests.concurrency import run_concurrently, run_interleaved
 from tests.factories import add_lot, ledger, ledger_and_lot_totals, remaining_by_lot
+from tests.fakes import TEST_NOW as NOW
 
-NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 5, 31, 9, 0, tzinfo=UTC)
 
 

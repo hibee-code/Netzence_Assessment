@@ -45,7 +45,7 @@ def complete_ride(
         driver_id=result.driver_id,
         credits=from_milli(result.credits_milli),
         expires_at=result.expires_at,
-        status="duplicate" if not result.created else "cancelled" if result.cancelled else "recorded",
+        status=result.status,
     )
 
 
@@ -70,6 +70,10 @@ def cancel_completed_ride(
     return RideCancelledOut(
         ride_id=result.ride_id,
         status=result.status,
-        reversed=None if result.reversed_milli is None else from_milli(result.reversed_milli),
-        shortfall=None if result.shortfall_milli is None else from_milli(result.shortfall_milli),
+        reversed=_credits(result.reversed_milli),
+        shortfall=_credits(result.shortfall_milli),
     )
+
+
+def _credits(milli: int | None) -> str | None:
+    return None if milli is None else from_milli(milli)

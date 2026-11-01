@@ -1,5 +1,4 @@
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -13,12 +12,9 @@ from app.clock import get_clock
 from app.config import get_settings
 from app.db import create_db_engine, get_engine
 from app.main import app
-from tests.fakes import FakeClock
+from tests.fakes import TEST_NOW, FakeClock
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
-
-# Default "now" for every test. Tests move it with clock.set(...) / clock.advance(...).
-TEST_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
 
 def _run_alembic(engine: Engine, action: str, revision: str) -> None:

@@ -9,6 +9,7 @@ from pydantic import AwareDatetime, BaseModel, Field, field_validator
 from app.credits import normalize_vehicle_type
 
 Identifier = Annotated[str, Field(min_length=1, max_length=255)]
+Reason = Annotated[str | None, Field(max_length=500)]
 
 
 class RideCompletedIn(BaseModel):
@@ -36,7 +37,7 @@ class RideCompletedOut(BaseModel):
 
 class RideCancelledIn(BaseModel):
     ride_id: Identifier
-    reason: Annotated[str | None, Field(max_length=500)] = None
+    reason: Reason = None
 
 
 class RideCancelledOut(BaseModel):
@@ -69,7 +70,7 @@ class HistoryOut(BaseModel):
 class RedeemIn(BaseModel):
     # Positive, at most 3 dp; 15 integer digits keeps milli-credits within BIGINT.
     amount: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=3)]
-    reason: Annotated[str | None, Field(max_length=500)] = None
+    reason: Reason = None
 
 
 class AllocationOut(BaseModel):

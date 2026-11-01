@@ -20,6 +20,7 @@ from sqlalchemy import Connection, text
 
 from app.money import from_milli
 from app.services.expiry import expire_lots
+from app.services.ledger import add_entry
 from app.services.locks import lock_driver, lock_ride
 from app.services.lots import debit_lots, drain_fifo, lock_spendable_lots
 
@@ -80,21 +81,15 @@ def apply_cancellation(
         target = unspent + redeemed
         reversed_milli = unspent + sum(amount for _, amount in clawback)
         shortfall_milli = target - reversed_milli
-        conn.execute(
-            text(
-                """
-                INSERT INTO ledger_entries (driver_id, entry_type, amount_milli, ride_id, lot_id, reason, created_at)
-                VALUES (:driver_id, 'REVERSAL', :amount, :ride_id, :lot_id, :reason, :now)
-                """
-            ),
-            {
-                "driver_id": driver_id,
-                "amount": -reversed_milli,
-                "ride_id": ride_id,
-                "lot_id": own_lot.id,
-                "reason": _reversal_reason(ride_id, reason, reversed_milli, target),
-                "now": now,
-            },
+        add_entry(
+            conn,
+            driver_id=driver_id,
+            entry_type="REVERSAL",
+            amount_milli=-reversed_milli,
+            reason=_reversal_reason(ride_id, reason, reversed_milli, target),
+            now=now,
+            ride_id=ride_id,
+            lot_id=own_lot.id,
         )
 
     conn.execute(

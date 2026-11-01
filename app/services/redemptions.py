@@ -13,6 +13,7 @@ from sqlalchemy import Connection, text
 
 from app.money import from_milli
 from app.services.expiry import expire_lots
+from app.services.ledger import add_entry
 from app.services.locks import lock_driver
 from app.services.lots import debit_lots, drain_fifo, lock_spendable_lots
 
@@ -98,20 +99,14 @@ def redeem(
         ),
         [{"redemption_id": redemption_id, "lot_id": lot_id, "amount": amount} for lot_id, amount in debits],
     )
-    conn.execute(
-        text(
-            """
-            INSERT INTO ledger_entries (driver_id, entry_type, amount_milli, redemption_id, reason, created_at)
-            VALUES (:driver_id, 'REDEEM', :amount, :redemption_id, :reason, :now)
-            """
-        ),
-        {
-            "driver_id": driver_id,
-            "amount": -amount_milli,
-            "redemption_id": redemption_id,
-            "reason": f"Redeemed {from_milli(amount_milli)} credits" + (f": {reason}" if reason else ""),
-            "now": now,
-        },
+    add_entry(
+        conn,
+        driver_id=driver_id,
+        entry_type="REDEEM",
+        amount_milli=-amount_milli,
+        reason=f"Redeemed {from_milli(amount_milli)} credits" + (f": {reason}" if reason else ""),
+        now=now,
+        redemption_id=redemption_id,
     )
     return _load_redemption(conn, redemption_id, created=True)
 

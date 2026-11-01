@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
+from tests import api
 from tests.factories import add_lot, ledger
 from tests.fakes import FakeClock
 
@@ -14,23 +15,10 @@ HOUR = timedelta(hours=1)
 
 
 def _complete(client: TestClient, ride_id: str, distance_km: str, completed_at: str, driver_id: str = "d1") -> None:
-    response = client.post(
-        "/rides/completed",
-        json={
-            "ride_id": ride_id,
-            "driver_id": driver_id,
-            "distance_km": distance_km,
-            "vehicle_type": "electric",
-            "completed_at": completed_at,
-        },
+    response = api.complete_ride(
+        client, ride_id, distance_km=distance_km, completed_at=completed_at, driver_id=driver_id
     )
     assert response.status_code == 201
-
-
-def _history(client: TestClient, driver_id: str = "d1", **params: Any) -> list[dict[str, Any]]:
-    response = client.get(f"/drivers/{driver_id}/history", params=params)
-    assert response.status_code == 200
-    return response.json()["entries"]
 
 
 def test_history_shows_every_credit_and_debit_with_its_reason(client: TestClient, clock: FakeClock) -> None:
@@ -38,12 +26,12 @@ def test_history_shows_every_credit_and_debit_with_its_reason(client: TestClient
     clock.advance(HOUR)
     _complete(client, "r2", "50", "2026-05-31T10:00:00Z")  # 6.000
     clock.advance(HOUR)
-    client.post("/drivers/d1/redeem", json={"amount": "5", "reason": "coffee"}, headers={"Idempotency-Key": "k1"})
+    api.redeem(client, "5", key="k1", reason="coffee")
     clock.advance(HOUR)
-    client.post("/rides/cancelled", json={"ride_id": "r2", "reason": "refund"})
+    api.cancel_ride(client, "r2", reason="refund")
     clock.set(datetime(2027, 5, 31, 9, 0, tzinfo=UTC))  # r1's remaining 7.000 expires
 
-    assert _history(client) == [
+    assert api.history(client) == [
         {"id": 1, "type": "EARN", "amount": "12.000", "ride_id": "r1", "redemption_id": None,
          "reason": "EV ride r1: 100 km", "created_at": "2026-06-01T12:00:00Z"},
         {"id": 2, "type": "EARN", "amount": "6.000", "ride_id": "r2", "redemption_id": None,
@@ -55,7 +43,7 @@ def test_history_shows_every_credit_and_debit_with_its_reason(client: TestClient
         {"id": 5, "type": "EXPIRY", "amount": "-7.000", "ride_id": "r1", "redemption_id": None,
          "reason": "Credits from ride r1 expired at 2027-05-31T09:00:00+00:00", "created_at": "2027-05-31T09:00:00Z"},
     ]
-    assert client.get("/drivers/d1/balance").json()["balance"] == "0.000"
+    assert api.balance(client) == "0.000"
 
 
 def test_history_is_ordered_by_created_at_then_id(client: TestClient, clock: FakeClock) -> None:
@@ -64,14 +52,14 @@ def test_history_is_ordered_by_created_at_then_id(client: TestClient, clock: Fak
     _complete(client, "recorded-second", "1", "2026-05-31T08:00:00Z")  # id 2, created 10:00
     _complete(client, "recorded-third", "1", "2026-05-31T08:00:00Z")  # id 3, created 10:00
 
-    assert [e["ride_id"] for e in _history(client)] == ["recorded-second", "recorded-third", "recorded-first"]
+    assert [e["ride_id"] for e in api.history(client)] == ["recorded-second", "recorded-third", "recorded-first"]
 
 
 def test_history_materializes_expiry_once(client: TestClient, test_engine: Engine) -> None:
     lot = add_lot(test_engine, "r-old", 40_000, datetime(2025, 5, 1, tzinfo=UTC))  # expired at clock time
 
-    first = _history(client)
-    second = _history(client)
+    first = api.history(client)
+    second = api.history(client)
 
     assert [e["type"] for e in first] == ["EARN", "EXPIRY"]
     assert second == first
@@ -82,7 +70,7 @@ def test_history_only_includes_the_requested_driver(client: TestClient) -> None:
     _complete(client, "mine", "1", "2026-05-31T09:00:00Z", driver_id="d1")
     _complete(client, "theirs", "1", "2026-05-31T09:00:00Z", driver_id="d2")
 
-    assert [e["ride_id"] for e in _history(client, "d1")] == ["mine"]
+    assert [e["ride_id"] for e in api.history(client, "d1")] == ["mine"]
 
 
 def test_unknown_driver_has_empty_history(client: TestClient) -> None:
@@ -115,7 +103,7 @@ def five_rides(client: TestClient, clock: FakeClock) -> None:
 def test_limit_and_offset_page_through_history(
     client: TestClient, params: dict[str, int], ride_ids: list[str]
 ) -> None:
-    assert [e["ride_id"] for e in _history(client, **params)] == ride_ids
+    assert [e["ride_id"] for e in api.history(client, **params)] == ride_ids
 
 
 def test_default_limit_is_100(client: TestClient, test_engine: Engine) -> None:
@@ -140,8 +128,8 @@ def test_default_limit_is_100(client: TestClient, test_engine: Engine) -> None:
             )
         )
 
-    assert len(_history(client)) == 100
-    assert len(_history(client, limit=500)) == 101
+    assert len(api.history(client)) == 100
+    assert len(api.history(client, limit=500)) == 101
 
 
 @pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 501}, {"limit": "x"}, {"offset": -1}])

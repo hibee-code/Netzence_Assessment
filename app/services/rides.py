@@ -8,13 +8,14 @@ All writes go through the caller's connection, inside the caller's single transa
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from sqlalchemy import Connection, text
 
 from app.config import CREDIT_LIFETIME, MAX_COMPLETED_AT_FUTURE_SKEW
 from app.credits import calculate_credits_milli, normalize_vehicle_type
 from app.services.cancellations import apply_cancellation
-from app.services.drivers import ensure_driver
+from app.services.ledger import add_entry
 from app.services.locks import lock_ride
 
 
@@ -35,6 +36,12 @@ class RideResult:
     expires_at: datetime | None  # None when the ride earned nothing
     created: bool  # False when this event was a duplicate of an already-recorded ride
     cancelled: bool  # True when the ride has been cancelled (e.g. a cancellation arrived first)
+
+    @property
+    def status(self) -> Literal["recorded", "cancelled", "duplicate"]:
+        if not self.created:
+            return "duplicate"
+        return "cancelled" if self.cancelled else "recorded"
 
 
 class CompletedAtInFuture(Exception):
@@ -60,7 +67,10 @@ def record_completed_ride(conn: Connection, event: RideCompleted, now: datetime)
     # Concurrent events for this ride_id (duplicates, or its cancellation) wait here until this
     # transaction commits, then see its result.
     lock_ride(conn, event.ride_id)
-    ensure_driver(conn, event.driver_id, now)
+    conn.execute(
+        text("INSERT INTO drivers (id, created_at) VALUES (:driver_id, :now) ON CONFLICT (id) DO NOTHING"),
+        {"driver_id": event.driver_id, "now": now},
+    )
 
     # The primary key decides: no row back means the ride is already recorded.
     inserted = conn.execute(
@@ -123,21 +133,15 @@ def _issue_credits(conn: Connection, event: RideCompleted, credits_milli: int, n
         },
     ).one()
 
-    conn.execute(
-        text(
-            """
-            INSERT INTO ledger_entries (driver_id, entry_type, amount_milli, ride_id, lot_id, reason, created_at)
-            VALUES (:driver_id, 'EARN', :amount, :ride_id, :lot_id, :reason, :now)
-            """
-        ),
-        {
-            "driver_id": event.driver_id,
-            "amount": credits_milli,
-            "ride_id": event.ride_id,
-            "lot_id": lot.id,
-            "reason": f"EV ride {event.ride_id}: {event.distance_km.normalize():f} km",
-            "now": now,
-        },
+    add_entry(
+        conn,
+        driver_id=event.driver_id,
+        entry_type="EARN",
+        amount_milli=credits_milli,
+        reason=f"EV ride {event.ride_id}: {event.distance_km.normalize():f} km",
+        now=now,
+        ride_id=event.ride_id,
+        lot_id=lot.id,
     )
     return lot.expires_at
 

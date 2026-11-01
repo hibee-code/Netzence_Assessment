@@ -29,6 +29,7 @@ def expire_lots(conn: Connection, driver_id: str, now: datetime) -> None:
     if not expired:
         return
 
+    # Not ledger.add_entry: EXPIRY needs ON CONFLICT DO NOTHING (one EXPIRY per lot) and a batch insert.
     conn.execute(
         text(
             """

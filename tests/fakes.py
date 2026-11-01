@@ -1,4 +1,7 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+
+# The instant every test starts at (the `clock` fixture); tests move it with set()/advance().
+TEST_NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
 
 class FakeClock:
